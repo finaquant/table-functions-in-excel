@@ -1,0 +1,455 @@
+// Finaquant Analytics - http://finaquant.com/
+// Copyright © Finaquant Analytics GmbH
+// Email: support@finaquant.com
+
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using FinaquantCalcs;
+using System.Reflection;
+
+// NetOffice: Microsoft Office integration without version limitations
+// http://netoffice.codeplex.com/
+using Excel = NetOffice.ExcelApi;
+using NetOffice.ExcelApi.GlobalHelperModules;
+using NetOffice.ExcelApi.Enums;
+using XTable = NetOffice.ExcelApi.ListObject;
+
+// Excel DNA: Integrate .NET into Excel
+// http://exceldna.codeplex.com/
+using ExcelDna.Integration;
+using ExcelDna.ComInterop;
+using CustomUI = ExcelDna.Integration.CustomUI;
+
+// How to call methods of class KeyMatriX in Excel VBA (macro)
+/*
+Sub Test_MatrixX()
+Dim M1 As Object: Set M1 = CreateObject("Finaquant_KeyMatriX")
+Dim M2 As Object: Set M2 = CreateObject("Finaquant_KeyMatriX")
+Dim R As Object: Set R = CreateObject("Finaquant_KeyMatriX")
+
+' read matrix from named range
+Call M1.ReadFromExcel("Matrix2")
+Call M2.ReadFromExcel("Matrix3")
+
+' print properties
+Debug.Print M1.nRows
+Debug.Print M2.nRows
+
+' print matrix
+Debug.Print M1.ToString()
+
+' matrix multiplication
+Set R = M1.MultiplyMatrix(M2)
+
+' write result to excel range
+Call R.WriteToExcel("Matrix4", "Sheet2", "", "B12")
+
+' get inverse matrix
+Set R = M1.Inverse()
+
+' write inverse matrix to excel range
+Call R.WriteToExcel("Matrix5", "Sheet2", "", "F2")
+
+' determinant
+Debug.Print M1.Determinant()
+
+End Sub
+ * */
+
+namespace FinaquantInExcel
+{
+
+    /// <summary>
+    /// Class with matrix functions for excel VBA. 
+    /// A KeyMatrixX object represents a matrix with key figures. 
+    /// All public and non-static methods in this class are available in Excel VBA.
+    /// </summary>
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.AutoDual)]
+    [ProgId("Finaquant_KeyMatriX")]
+    public class KeyMatrixX
+    {
+        private KeyMatrix _km = null;
+
+        #region "KeyMatrixX constructors"
+
+        /// <summary>
+        /// Default constructor: Initialize a matrix object
+        /// </summary>
+        public KeyMatrixX() { _km = new KeyMatrix(); }
+
+
+        /// <summary>
+        /// Create NxN identity matrix
+        /// </summary>
+        /// <param name="N">Row and column count</param>
+        public KeyMatrixX(int N)
+        {
+            _km = new KeyMatrix(N);
+        }
+
+        /// <summary>
+        /// Create a NxM matrix with constant-valued elements
+        /// </summary>
+        /// <param name="nRows">N</param>
+        /// <param name="nCols">M</param>
+        /// <param name="ConstValue">Constant scalar value</param>
+        public KeyMatrixX(int nRows, int nCols, double ConstValue = 0)
+        {
+            _km = KeyMatrix.CreateConstantMatrix(nRows, nCols, ConstValue);
+        }
+
+        /// <summary>
+        /// Clone matrix
+        /// </summary>
+        /// <param name="M">Key Figure Matrix</param>
+        internal KeyMatrixX(KeyMatrix M)
+        {
+            _km = M.Clone();
+        }
+
+        #endregion "KeyMatrixX constructors"
+
+        #region "KeyMatrixX properties
+
+        /// <summary>
+        /// Get row count of matrix
+        /// </summary>
+        public int nRows
+        {
+            get { return this._km.nRows; }
+        }
+
+        /// <summary>
+        /// Get column count of matrix
+        /// </summary>
+        public int nCols
+        {
+            get { return this._km.nCols; }
+        }
+
+        /// <summary>
+        /// Convert matrix to two dimensional array ([,])
+        /// </summary>
+        public double[,] toArray
+        {
+            get { return this._km.toArray; }
+        }
+
+        /// <summary>
+        /// Get number of elements in matrix
+        /// </summary>
+        public int ElementCount
+        {
+            get { return this._km.ElementCount; }
+        }
+
+        /// <summary>
+        /// Get underlying KeyMatrix object
+        /// </summary>
+        internal KeyMatrix keymatrix
+        {
+            get { return this._km; }
+        }
+
+        #endregion "KeyMatrixX properties"
+
+        #region "KeyMatrixX methods"
+
+        /// <summary>
+        /// Read matrix from a named range
+        /// </summary>
+        /// <param name="RangeName">Name of range</param>
+        /// <param name="WorkbookPath">Full workbook path</param>
+        /// <param name="KeyFigReplaceNull">Replacement value for null or empty in Excel</param>
+        /// <returns>Matrix</returns>
+        public void ReadFromExcel(string RangeName, string WorkbookPath = "", double KeyFigReplaceNull = 0)
+        {
+            KeyMatrix M = ExcelFunc_NO.ReadKeyMatrixFromExcel(RangeName, WorkbookPath, KeyFigReplaceNull);
+
+            this._km = M;
+        }
+
+        /// <summary>
+        /// Write matrix to a Excel range
+        /// </summary>
+        /// <param name="M">Matrix</param>
+        /// <param name="RangeName">Name of range</param>
+        /// <param name="SheetName">Sheet name</param>
+        /// <param name="WorkbookPath">Full workbook path<</param>
+        /// <param name="TopLeftCell">Upper-left corner of matrix range in Excel</param>
+        public void WriteToExcel(string RangeName, string SheetName, string WorkbookPath = "",
+            string TopLeftCell = "A1")
+        {
+            // Get current application and active workbook
+            Excel.Application xlApp = ExcelFunc_NO.GetExcelApplicationInstance();
+            Excel.Workbook wbook;
+
+            if (WorkbookPath == null || WorkbookPath == "")
+                wbook = xlApp.ActiveWorkbook;
+            else
+                wbook = ExcelFunc_NO.GetWorkbookByFullName(xlApp, WorkbookPath);
+
+            // write to excel
+            ExcelFunc_NO.WriteKeyMatrixToExcel(wbook, this._km, SheetName, TopLeftCell, RangeName);
+        }
+
+        /// <summary>
+        /// Convert matrix to formatted string
+        /// </summary>
+        /// <returns>Printable string</returns>
+        public override string ToString()
+        {
+            return this._km.ToString();
+        }
+
+        /// <summary>
+        /// Convert 2-dimensional array to matrix
+        /// </summary>
+        /// <param name="arr">2-dim array</param>
+        /// <returns>Matrix</returns>
+        public KeyMatrixX ArrayToMatrix(double[,] arr)
+        {
+            return new KeyMatrixX(KeyMatrix.ArrayToMatrix(arr));
+        }
+
+        /// <summary>
+        /// Comvert matrix to 2-dimensional array
+        /// </summary>
+        /// <param name="M">Matrix</param>
+        /// <returns>2-dim array</returns>
+        public double[,] MatrixToArray(KeyMatrixX M)
+        {
+            return M.toArray;
+        }
+
+        /// <summary>
+        /// Clone matrix
+        /// </summary>
+        /// <returns>Clone of this instance matrix</returns>
+        public KeyMatrixX Clone()
+        {
+            return new KeyMatrixX(this._km.Clone());
+        }
+
+        /// <summary>
+        /// Create NxN Identity Matrix
+        /// </summary>
+        /// <param name="N">row and column size</param>
+        /// <returns>Identity Matrix</returns>
+        public KeyMatrixX CreateIdentityMatrix(int N)
+        {
+            return new KeyMatrixX(N);
+        }
+
+        /// <summary>
+        /// Creates matrix with sequential element values; fills matrix row-by-row with numbers.
+        /// </summary>
+        /// <param name="nRows">Row count</param>
+        /// <param name="nCols">Column count</param>
+        /// <param name="StartValue">Value of first element</param>
+        /// <param name="Interval">Difference between subsequent elements</param>
+        /// <returns>Matrix with sequential elements</returns>
+        public KeyMatrixX CreateSequentielMatrix(int nRows, int nCols,
+            double StartValue, double Interval)
+        {
+            return new KeyMatrixX(KeyMatrix.CreateSequentielMatrix(nRows, nCols, StartValue, Interval));
+        }
+
+        /// <summary>
+        /// Create NxM matrix with constant valued elements
+        /// </summary>
+        /// <param name="nRows">Row size N</param>
+        /// <param name="nCols">Column size M</param>
+        /// <param name="ConstValue">Constant scalar value</param>
+        /// <returns>Constant Matrix</returns>
+        public KeyMatrixX CreateConstantMatrix(int nRows, int nCols,
+            double ConstValue)
+        {
+            return new KeyMatrixX(nRows, nCols, ConstValue);
+        }
+
+        /// <summary>
+        /// Create matrix with random element values between 0 and 1
+        /// </summary>
+        /// <param name="nRows">Row count</param>
+        /// <param name="nCols">Column count</param>
+        /// <param name="nRandSeed">Random seed value</param>
+        /// <returns>Matrix with random-valued elements</returns>
+        public KeyMatrixX CreateRandomMatrix(int nRows, int nCols, int nRandSeed = 10)
+        {
+            return new KeyMatrixX(KeyMatrix.CreateRandomMatrix(nRows, nCols, nRandSeed));
+        }
+
+        /// <summary>
+        /// Sum of all elements in matrix
+        /// </summary>
+        /// <returns>Sum</returns>
+        public double Sum()
+        {
+            return this._km.Sum();
+        }
+
+        /// <summary>
+        /// Row-wise sum of matrix elements. Returns a single-row (1xN) matrix.
+        /// </summary>
+        /// <returns>Single-row (1xN) matrix</returns>
+        public KeyMatrixX SumVertical()
+        {
+            return new KeyMatrixX(this._km.SumOfElements(RowColDirection.RowByRow));
+        }
+
+        /// <summary>
+        /// Column-wise sum of matrix elements. Returns a single-column (Nx1) matrix.
+        /// </summary>
+        /// <returns>Single-column (Nx1) matrix</returns>
+        public KeyMatrixX SumHorizontal()
+        {
+            return new KeyMatrixX(this._km.SumOfElements(RowColDirection.ColByCol));
+        }
+
+        /// <summary>
+        /// Return submatrix with selected rows
+        /// </summary>
+        /// <param name="RowIndices">Row indices</param>
+        /// <returns>Submatrix</returns>
+        public KeyMatrixX SelectRows(int[] RowIndices)
+        {
+            var RowInd = new NumVector(RowIndices);
+
+            return new KeyMatrixX(this._km.SelectRows(RowInd));
+        }
+
+        /// <summary>
+        /// Return submatrix with selected columns
+        /// </summary>
+        /// <param name="ColumnIndices">Column indices</param>
+        /// <returns>Submatrix</returns>
+        public KeyMatrixX SelectColumns(int[] ColumnIndices)
+        {
+            var ColInd = new NumVector(ColumnIndices);
+
+            return new KeyMatrixX(this._km.SelectColumns(ColInd));
+        }
+
+        /// <summary>
+        /// Transpose matrix
+        /// </summary>
+        /// <returns>Transposed matrix</returns>
+        public KeyMatrixX Transpose()
+        {
+            return new KeyMatrixX(this._km.Transpose());
+        }
+
+        /// <summary>
+        /// Element-wise multiplication of two equal-sized matrices (R = M1 .* M2)
+        /// </summary>
+        /// <param name="M2">Second input matrix</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX MultiplyElements(KeyMatrixX M2)
+        {
+            return new KeyMatrixX(KeyMatrix.MultiplyElementWise(this._km, M2._km));
+        }
+
+        /// <summary>
+        /// Element-wise division of two equal-sized matrices (R = M1 ./ M2)
+        /// </summary>
+        /// <param name="M2">Second input matrix</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX DivideElements(KeyMatrixX M2)
+        {
+            return new KeyMatrixX(KeyMatrix.DivideElementWise(this._km, M2._km));
+        }
+
+        /// <summary>
+        /// Sum of two equal-sized matrices (R = M1 + M2)
+        /// </summary>
+        /// <param name="M2">Second input matrix</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX AddMatrix(KeyMatrixX M2)
+        {
+            return new KeyMatrixX(KeyMatrix.AddMatrices(this._km, M2._km));
+        }
+
+        /// <summary>
+        /// Matrix multiplication from linear algebra: R = M1 x M2 
+        /// </summary>
+        /// <param name="M2">Second input matrix</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX MultiplyMatrix(KeyMatrixX M2)
+        {
+            return new KeyMatrixX(KeyMatrix.MultiplyMatrices(this._km, M2._km));
+        }
+
+        /// <summary>
+        /// Add the same scalar value to all matrix elements
+        /// </summary>
+        /// <param name="M2">Second input matrix</param>
+        /// <param name="x">Scalar value</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX AddScalar(KeyMatrixX M2, double x)
+        {
+            return new KeyMatrixX(KeyMatrix.AddScalarToMatrix(this._km, x));
+        }
+
+        /// <summary>
+        /// Multiply all matrix elements with the same scalar value
+        /// </summary>
+        /// <param name="M2">Second input matrix</param>
+        /// <param name="x">Scalar value</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX MultiplyScalar(KeyMatrixX M2, double x)
+        {
+            return new KeyMatrixX(KeyMatrix.MultiplyMatrixWithScalar(this._km, x));
+        }
+
+        /// <summary>
+        /// Determinant of a NxN square matrix
+        /// </summary>
+        /// <returns>Determinant</returns>
+        public double Determinant()
+        {
+            return KeyMatrix.Determinant(this._km);
+        }
+
+        /// <summary>
+        /// Inverse of a NxN square matrix with non-zero determinant
+        /// </summary>
+        /// <returns>Inverse matrix</returns>
+        public KeyMatrixX Inverse()
+        {
+            return new KeyMatrixX(this._km.Inverse());
+        }
+
+        /// <summary>
+        /// Append M2 to M1 (this instance) vertically.
+        /// Both matrices must have identical number of columns.
+        /// </summary>
+        /// <param name="M2">2. input matrix</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX VerticalAppend(KeyMatrixX M2)
+        {
+            return new KeyMatrixX(this._km.AppendMatrix(M2._km, MatrixAlignment.nVertical));
+        }
+
+        /// <summary>
+        /// Append M2 to M1 (this instance) horizontally.
+        /// Both matrices must have identical number of rows.
+        /// </summary>
+        /// <param name="M2">2. input matrix</param>
+        /// <returns>Resultant matrix</returns>
+        public KeyMatrixX HorizontalAppend(KeyMatrixX M2)
+        {
+            return new KeyMatrixX(this._km.AppendMatrix(M2._km, MatrixAlignment.nHorizontal));
+        }
+
+        #endregion "KeyMatrixX methods"
+
+    }
+}
